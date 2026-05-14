@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>座標平均與自動剔除工具</title>
+    <style>
+        body {
+            font-family: "Microsoft JhengHei", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f4f6f8;
+            color: #222;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 26px;
+        }
+
+        .container {
+            max-width: 1300px;
+            margin: auto;
+        }
+
+        .panel {
+            background: #fff;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 280px;
+            box-sizing: border-box;
+            font-family: Consolas, monospace;
+            font-size: 15px;
+            padding: 12px;
+            resize: vertical;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            line-height: 1.5;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        label {
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+
+        button {
+            padding: 9px 16px;
+            margin-right: 8px;
+            border: none;
+            border-radius: 6px;
+            background: #1f78d1;
+            color: white;
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        button:hover {
+            background: #155fa8;
+        }
+
+        button.secondary {
+            background: #666;
+        }
+
+        button.secondary:hover {
+            background: #444;
+        }
+
+        input[type="number"], select {
+            padding: 7px;
+            font-size: 15px;
+            margin-right: 12px;
+        }
+
+        input[type="number"] {
+            width: 90px;
+        }
+
+        .hint {
+            color: #555;
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .summary {
+            font-size: 15px;
+            line-height: 1.8;
+        }
+
+        .error {
+            color: #c0392b;
+            white-space: pre-wrap;
+            font-family: Consolas, monospace;
+            font-size: 14px;
+        }
+
+        .removed {
+            color: #b45f06;
+            white-space: pre-wrap;
+            font-family: Consolas, monospace;
+            font-size: 14px;
+        }
+
+        code {
+            background: #eee;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+
+        @media (max-width: 900px) {
+            .row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <h1>座標平均與自動剔除工具</h1>
+
+    <div class="panel hint">
+        支援格式：<br>
+        <code>點號 N E H</code>，例如：<code>1001 2771290.802 301207.676 4.14232</code><br>
+        <code>點號 N E</code>，例如：<code>1001 2771290.802 301207.676</code><br>
+        <code>N E H</code>，例如：<code>2771290.802 301207.676 4.14232</code><br>
+        <code>N E</code>，例如：<code>2771290.802 301207.676</code><br>
+        可使用空白、Tab 或逗號分隔，例如：<code>1001,2771290.802,301207.676,4.14232</code><br><br>
+        自動剔除方式：同一點號內，若某筆資料的 N、E 或 H 與該點號的中位數差異超過設定值，預設 <code>0.3</code>，就會剔除。<br>
+        如果沒有點號，會全部歸類為「全部」一起平均。
+    </div>
+
+    <div class="panel">
+        <button onclick="calculate()">計算平均</button>
+        <button class="secondary" onclick="clearAll()">清除</button>
+
+        小數位數：
+        <input id="decimalPlaces" type="number" value="3" min="0" max="10" oninput="calculate()">
+
+        剔除門檻：
+        <input id="threshold" type="number" value="0.3" step="0.001" min="0" oninput="calculate()">
+
+        <label>
+            <input id="enableOutlier" type="checkbox" checked onchange="calculate()">
+            啟用自動剔除
+        </label>
+
+        解析模式：
+        <select id="parseMode" onchange="calculate()">
+            <option value="auto">自動判斷</option>
+            <option value="pointNEH">點號 N E H</option>
+            <option value="pointNE">點號 N E</option>
+            <option value="NEH">N E H</option>
+            <option value="NE">N E</option>
+        </select>
+    </div>
+
+    <div class="row">
+        <div class="panel">
+            <label for="inputData">貼上原始資料</label>
+            <textarea id="inputData" placeholder="例如：
+1001	2771290.802 	301207.676 	4.14232
+1001,2771290.806,301207.680,4.14236
+1001 2771295.000 301210.000 9.999
+1002 2771300.100 301210.200
+1002 2771300.120 301210.210"></textarea>
+        </div>
+
+        <div class="panel">
+            <label for="outputData">平均結果</label>
+            <textarea id="outputData" readonly></textarea>
+        </div>
+    </div>
+
+    <div class="panel">
+        <label>被剔除資料</label>
+        <div id="removedList" class="removed"></div>
+    </div>
+
+    <div class="panel">
+        <label>統計與略過資料</label>
+        <div id="summary" class="summary"></div>
+        <div id="errorList" class="error"></div>
+    </div>
+
+</div>
+
+<script>
+    const input = document.getElementById("inputData");
+    input.addEventListener("input", calculate);
+
+    function isNumber(value) {
+        if (value === undefined || value === null) return false;
+        value = String(value).trim();
+        if (value === "") return false;
+        return !isNaN(Number(value));
+    }
+
+    function formatNumber(value, places) {
+        if (value === null || value === undefined || isNaN(value)) return "";
+        return Number(value).toFixed(places);
+    }
+
+    function median(values) {
+        const arr = values
+            .filter(v => v !== null && v !== undefined && !isNaN(v))
+            .slice()
+            .sort((a, b) => a - b);
+
+        if (arr.length === 0) return null;
+
+        const mid = Math.floor(arr.length / 2);
+
+        if (arr.length % 2 === 0) {
+            return (arr[mid - 1] + arr[mid]) / 2;
+        } else {
+            return arr[mid];
+        }
+    }
+
+    function parseLine(line, lineNo, mode) {
+        const originalLine = line;
+        line = line.trim();
+
+        if (line === "") {
+            return { skip: true };
+        }
+
+        const parts = line.split(/[,\s]+/).filter(x => x !== "");
+
+        let pointNo = "全部";
+        let n = null;
+        let e = null;
+        let h = null;
+
+        if (mode === "pointNEH") {
+            if (parts.length < 4) {
+                return { error: `第 ${lineNo} 行欄位數不足，應為：點號 N E H，已略過：${originalLine}` };
+            }
+
+            pointNo = parts[0];
+            n = parts[1];
+            e = parts[2];
+            h = parts[3];
+        }
+
+        else if (mode === "pointNE") {
+            if (parts.length < 3) {
+                return { error: `第 ${lineNo} 行欄位數不足，應為：點號 N E，已略過：${originalLine}` };
+            }
+
+            pointNo = parts[0];
+            n = parts[1];
+            e = parts[2];
+            h = null;
+        }
+
+        else if (mode === "NEH") {
+            if (parts.length < 3) {
+                return { error: `第 ${lineNo} 行欄位數不足，應為：N E H，已略過：${originalLine}` };
+            }
+
+            pointNo = "全部";
+            n = parts[0];
+            e = parts[1];
+            h = parts[2];
+        }
+
+        else if (mode === "NE") {
+            if (parts.length < 2) {
+                return { error: `第 ${lineNo} 行欄位數不足，應為：N E，已略過：${originalLine}` };
+            }
+
+            pointNo = "全部";
+            n = parts[0];
+            e = parts[1];
+            h = null;
+        }
+
+        else {
+            // 自動判斷模式
+            if (parts.length >= 4) {
+                // 點號 N E H
+                pointNo = parts[0];
+                n = parts[1];
+                e = parts[2];
+                h = parts[3];
+            } else if (parts.length === 3) {
+                /*
+                    3欄有兩種可能：
+                    1. 點號 N E，例如：1001 2771290.802 301207.676
+                    2. N E H，例如：2771290.802 301207.676 4.14232
+
+                    自動判斷邏輯：
+                    若第1欄不像大座標，而第2欄像座標，視為「點號 N E」。
+                    否則視為「N E H」。
+                */
+                if (isNumber(parts[0]) && isNumber(parts[1]) && isNumber(parts[2])) {
+                    const a = Math.abs(Number(parts[0]));
+                    const b = Math.abs(Number(parts[1]));
+
+                    if (a < 100000 && b > 10000) {
+                        pointNo = parts[0];
+                        n = parts[1];
+                        e = parts[2];
+                        h = null;
+                    } else {
+                        pointNo = "全部";
+                        n = parts[0];
+                        e = parts[1];
+                        h = parts[2];
+                    }
+                } else {
+                    // 例如：A01 2771290.802 301207.676
+                    pointNo = parts[0];
+                    n = parts[1];
+                    e = parts[2];
+                    h = null;
+                }
+            } else if (parts.length === 2) {
+                // N E
+                pointNo = "全部";
+                n = parts[0];
+                e = parts[1];
+                h = null;
+            } else {
+                return { error: `第 ${lineNo} 行欄位數不足，已略過：${originalLine}` };
+            }
+        }
+
+        // 表頭或非數字資料自動略過
+        if (!isNumber(n) || !isNumber(e)) {
+            return { error: `第 ${lineNo} 行 N 或 E 不是有效數值，已略過：${originalLine}` };
+        }
+
+        if (h !== null && h !== undefined && h !== "" && !isNumber(h)) {
+            return { error: `第 ${lineNo} 行 H 不是有效數值，已略過：${originalLine}` };
+        }
+
+        return {
+            record: {
+                lineNo: lineNo,
+                raw: originalLine,
+                pointNo: String(pointNo),
+                n: Number(n),
+                e: Number(e),
+                h: h === null || h === undefined || h === "" ? null : Number(h),
+                removed: false,
+                removedReason: ""
+            }
+        };
+    }
+
+    function groupRecords(records) {
+        const groups = new Map();
+
+        records.forEach(r => {
+            if (!groups.has(r.pointNo)) {
+                groups.set(r.pointNo, []);
+            }
+            groups.get(r.pointNo).push(r);
+        });
+
+        return groups;
+    }
+
+    function applyOutlierRemoval(records, threshold) {
+        const groups = groupRecords(records);
+        const removed = [];
+
+        for (const [pointNo, list] of groups.entries()) {
+            // 至少要3筆，才做異常判斷
+            if (list.length < 3) continue;
+
+            const medN = median(list.map(r => r.n));
+            const medE = median(list.map(r => r.e));
+            const hValues = list
+                .filter(r => r.h !== null)
+                .map(r => r.h);
+
+            const medH = hValues.length >= 3 ? median(hValues) : null;
+
+            list.forEach(r => {
+                const reasons = [];
+
+                const diffN = Math.abs(r.n - medN);
+                const diffE = Math.abs(r.e - medE);
+
+                if (diffN > threshold) {
+                    reasons.push(`N差=${diffN.toFixed(4)}`);
+                }
+
+                if (diffE > threshold) {
+                    reasons.push(`E差=${diffE.toFixed(4)}`);
+                }
+
+                if (r.h !== null && medH !== null) {
+                    const diffH = Math.abs(r.h - medH);
+                    if (diffH > threshold) {
+                        reasons.push(`H差=${diffH.toFixed(4)}`);
+                    }
+                }
+
+                if (reasons.length > 0) {
+                    r.removed = true;
+                    r.removedReason =
+                        `點號=${pointNo}，` +
+                        `中位數N=${medN.toFixed(4)}，` +
+                        `中位數E=${medE.toFixed(4)}` +
+                        (medH !== null ? `，中位數H=${medH.toFixed(4)}` : "") +
+                        `，${reasons.join("，")}`;
+
+                    removed.push(r);
+                }
+            });
+        }
+
+        return removed;
+    }
+
+    function calculate() {
+        const text = document.getElementById("inputData").value;
+        const places = Number(document.getElementById("decimalPlaces").value);
+        const threshold = Number(document.getElementById("threshold").value);
+        const enableOutlier = document.getElementById("enableOutlier").checked;
+        const mode = document.getElementById("parseMode").value;
+
+        const lines = text.split(/\r?\n/);
+
+        const records = [];
+        const errors = [];
+
+        lines.forEach((line, index) => {
+            const result = parseLine(line, index + 1, mode);
+
+            if (result.skip) return;
+
+            if (result.error) {
+                errors.push(result.error);
+                return;
+            }
+
+            if (result.record) {
+                records.push(result.record);
+            }
+        });
+
+        let removedRecords = [];
+
+        if (enableOutlier && records.length > 0 && !isNaN(threshold)) {
+            removedRecords = applyOutlierRemoval(records, threshold);
+        }
+
+        const groups = groupRecords(records);
+
+        let output = "";
+        let totalValid = 0;
+        let totalRemoved = 0;
+
+        let totalSumN = 0;
+        let totalSumE = 0;
+        let totalCountNE = 0;
+
+        let totalSumH = 0;
+        let totalCountH = 0;
+
+        if (records.length > 0) {
+            output += "點號\t有效筆數\t剔除筆數\t平均N\t平均E\t平均H\tH有效筆數\n";
+
+            for (const [pointNo, list] of groups.entries()) {
+                const validList = list.filter(r => !r.removed);
+                const removedList = list.filter(r => r.removed);
+
+                const count = validList.length;
+                const removedCount = removedList.length;
+
+                totalValid += count;
+                totalRemoved += removedCount;
+
+                if (count === 0) {
+                    output += [
+                        pointNo,
+                        0,
+                        removedCount,
+                        "",
+                        "",
+                        "",
+                        0
+                    ].join("\t") + "\n";
+                    continue;
+                }
+
+                const sumN = validList.reduce((s, r) => s + r.n, 0);
+                const sumE = validList.reduce((s, r) => s + r.e, 0);
+
+                const hList = validList.filter(r => r.h !== null);
+                const sumH = hList.reduce((s, r) => s + r.h, 0);
+
+                const avgN = sumN / count;
+                const avgE = sumE / count;
+                const avgH = hList.length > 0 ? sumH / hList.length : null;
+
+                totalSumN += sumN;
+                totalSumE += sumE;
+                totalCountNE += count;
+
+                totalSumH += sumH;
+                totalCountH += hList.length;
+
+                output += [
+                    pointNo,
+                    count,
+                    removedCount,
+                    formatNumber(avgN, places),
+                    formatNumber(avgE, places),
+                    avgH === null ? "" : formatNumber(avgH, places),
+                    hList.length
+                ].join("\t") + "\n";
+            }
+
+            if (totalCountNE > 0) {
+                output += "\n全部平均，已排除剔除資料\n";
+                output += [
+                    "全部",
+                    totalCountNE,
+                    totalRemoved,
+                    formatNumber(totalSumN / totalCountNE, places),
+                    formatNumber(totalSumE / totalCountNE, places),
+                    totalCountH > 0 ? formatNumber(totalSumH / totalCountH, places) : "",
+                    totalCountH
+                ].join("\t");
+            }
+        }
+
+        document.getElementById("outputData").value = output;
+
+        let removedText = "";
+
+        if (removedRecords.length > 0) {
+            removedText += "以下資料已被剔除：\n\n";
+
+            removedRecords.forEach(r => {
+                removedText +=
+                    `第 ${r.lineNo} 行：${r.raw}\n` +
+                    `原因：${r.removedReason}\n\n`;
+            });
+        } else {
+            removedText = "沒有資料被剔除。";
+        }
+
+        document.getElementById("removedList").textContent = removedText;
+
+        document.getElementById("summary").innerHTML =
+            `原始有效資料數量：${records.length}<br>` +
+            `剔除資料數量：${removedRecords.length}<br>` +
+            `平均使用資料數量：${records.length - removedRecords.length}<br>` +
+            `點號數量：${groups.size}<br>` +
+            `剔除門檻：${enableOutlier ? threshold : "未啟用"}`;
+
+        if (errors.length > 0) {
+            document.getElementById("errorList").textContent =
+                "\n略過資料：\n" + errors.join("\n");
+        } else {
+            document.getElementById("errorList").textContent = "";
+        }
+    }
+
+    function clearAll() {
+        document.getElementById("inputData").value = "";
+        document.getElementById("outputData").value = "";
+        document.getElementById("summary").innerHTML = "";
+        document.getElementById("errorList").textContent = "";
+        document.getElementById("removedList").textContent = "";
+    }
+</script>
+
+</body>
+</html>
